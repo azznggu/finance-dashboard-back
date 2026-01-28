@@ -48,7 +48,21 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
     const response = await fetch(
       'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=krw&include_24hr_change=true'
     );
+
+    if (!response.ok) {
+      throw new Error(`CoinGecko API 오류: ${response.status} ${response.statusText}`);
+    }
+
     const data = await response.json();
+
+    // API 응답 검증
+    if (!data || !data['pax-gold']) {
+      throw new Error('금시세 데이터를 찾을 수 없습니다');
+    }
+
+    if (!data['pax-gold'].krw) {
+      throw new Error('KRW 가격 데이터가 없습니다');
+    }
 
     // 1온스 = 31.1035그램, 3.75그램으로 환산
     const gramsToOunce = 3.75 / 31.1035;
@@ -85,7 +99,21 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
     const response = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=krw&include_24hr_change=true`
     );
+
+    if (!response.ok) {
+      throw new Error(`CoinGecko API 오류: ${response.status} ${response.statusText}`);
+    }
+
     const data = await response.json();
+
+    // API 응답 검증
+    if (!data || !data[coinId]) {
+      throw new Error(`암호화폐 데이터를 찾을 수 없습니다: ${symbol} (${coinId})`);
+    }
+
+    if (!data[coinId].krw) {
+      throw new Error(`KRW 가격 데이터가 없습니다: ${symbol}`);
+    }
 
     const current = data[coinId].krw;
     const change24h = data[coinId].krw_24h_change || 0;
