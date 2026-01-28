@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 .env
+
+# Frontend 관련 (백엔드 저장소이므로 제외)
+frontend/
