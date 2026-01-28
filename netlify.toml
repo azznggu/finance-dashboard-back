@@ -1,0 +1,40 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# 기존 프론트/클라이언트가 호출하던 /api/* 경로를 그대로 유지하기 위한 리라이트
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/exchange-rate"
+  to = "/.netlify/functions/exchange-rate"
+  status = 200
+
+[[redirects]]
+  from = "/api/gold"
+  to = "/.netlify/functions/gold"
+  status = 200
+
+[[redirects]]
+  from = "/api/sp500"
+  to = "/.netlify/functions/sp500"
+  status = 200
+
+[[redirects]]
+  from = "/api/all"
+  to = "/.netlify/functions/all"
+  status = 200
+
+# Express의 /api/crypto/:symbol 형태를 Netlify Functions로 매핑
+[[redirects]]
+  from = "/api/crypto/*"
+  to = "/.netlify/functions/crypto?symbol=:splat"
+  status = 200
+

@@ -15,6 +15,16 @@ npm run dev
 ```
 서버가 `http://localhost:3001`에서 실행됩니다.
 
+## ☁️ Netlify Functions 배포(서버리스) 가정
+
+이 백엔드는 **Netlify Functions**로도 동작하도록 구성되어 있습니다.
+
+- **함수 위치**: `netlify/functions/*`
+- **리라이트 설정**: `netlify.toml` (기존 `/api/*` 경로 유지)
+
+Netlify 배포 시에는 Express 서버(`src/index.ts`)를 상시 실행하는 방식이 아니라,
+각 엔드포인트가 **서버리스 함수**로 실행됩니다.
+
 ### 프로덕션 빌드
 ```bash
 npm run build
