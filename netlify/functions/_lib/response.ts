@@ -27,3 +27,7 @@ export function serverError(message: string): HandlerResponse {
   return json(500, { error: message });
 }
 
+export function serverErrorWithDetail(message: string, detail: unknown): HandlerResponse {
+  return json(500, { error: message, detail });
+}
+

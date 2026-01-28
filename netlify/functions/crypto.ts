@@ -1,6 +1,6 @@
 import type { Handler } from '@netlify/functions';
 import { getCached } from './_lib/cache.js';
-import { badRequest, ok, serverError } from './_lib/response.js';
+import { badRequest, ok, serverErrorWithDetail } from './_lib/response.js';
 import { getCryptoPrice } from '../../src/services/financeService.ts';
 
 const TTL_MS = 10 * 60 * 1000; // 10분
@@ -22,7 +22,8 @@ export const handler: Handler = async (event) => {
     return ok(data);
   } catch (error) {
     console.error('가상화폐 API 오류:', error);
-    return serverError('가상화폐 정보를 가져올 수 없습니다');
+    const detail = error instanceof Error ? error.message : String(error);
+    return serverErrorWithDetail('가상화폐 정보를 가져올 수 없습니다', detail);
   }
 };
 
