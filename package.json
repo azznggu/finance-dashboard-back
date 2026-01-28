@@ -22,7 +22,8 @@
     "axios": "^1.13.4",
     "cors": "^2.8.5",
     "express": "^4.18.2",
-    "node-cache": "^5.1.2"
+    "node-cache": "^5.1.2",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
