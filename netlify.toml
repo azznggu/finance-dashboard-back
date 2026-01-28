@@ -35,6 +35,6 @@
 # Express의 /api/crypto/:symbol 형태를 Netlify Functions로 매핑
 [[redirects]]
   from = "/api/crypto/*"
-  to = "/.netlify/functions/crypto?symbol=:splat"
+  to = "/.netlify/functions/crypto/:splat"
   status = 200
 
