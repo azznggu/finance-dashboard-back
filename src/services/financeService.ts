@@ -152,90 +152,35 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
   }
 }
 
-// 가상화폐 시세 조회
-// - 1차: Binance (일부 환경에서 451 등으로 차단될 수 있음)
-// - 2차: CoinCap (무료/공개, 키 없이 사용 가능)
+// 가상화폐 시세 조회 - CoinGecko API 사용
 export async function getCryptoPrice(symbol: string, period: string = '1day'): Promise<HistoricalData> {
   try {
     const upper = symbol.toUpperCase();
 
-    const binanceSymbols: Record<string, string> = {
-      BTC: 'BTCUSDT',
-      ETH: 'ETHUSDT',
-      XRP: 'XRPUSDT'
-    };
-
-    const coinCapIds: Record<string, string> = {
+    const coinGeckoIds: Record<string, string> = {
       BTC: 'bitcoin',
       ETH: 'ethereum',
       XRP: 'ripple'
     };
 
-    const binanceSymbol = binanceSymbols[upper];
-    const coinCapId = coinCapIds[upper];
+    const coinId = coinGeckoIds[upper];
 
-    if (!binanceSymbol || !coinCapId) {
+    if (!coinId) {
       throw new Error(`지원하지 않는 암호화폐: ${symbol}`);
     }
 
-    // USD/KRW 환율 조회 (KRW 환산용)
-    const { statusCode: exStatusCode, body: exBody } = await request('https://open.er-api.com/v6/latest/USD', {
-      method: 'GET',
-      headersTimeout: 10000,
-      bodyTimeout: 10000
-    });
-    const exText = await exBody.text();
-    const exchangeData = JSON.parse(exText);
-    const usdToKrw = exchangeData.rates?.KRW || 1320;
+    // CoinGecko API로 KRW 가격 직접 조회
+    const data = await fetchWithRetry<any>(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=krw&include_24hr_change=true`
+    );
 
-    // 1) Binance 우선 시도
-    let currentUsd: number | null = null;
-    let change24h: number = 0;
-
-    try {
-      const { statusCode: binanceStatus, body: binanceBody } = await request(
-        `https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`,
-        {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)'
-          },
-          headersTimeout: 10000,
-          bodyTimeout: 10000
-        }
-      );
-
-      if (binanceStatus === 200) {
-        const binanceText = await binanceBody.text();
-        const binanceData = JSON.parse(binanceText);
-
-        if (binanceData?.lastPrice) {
-          currentUsd = parseFloat(binanceData.lastPrice);
-          change24h = parseFloat(binanceData.priceChangePercent) || 0;
-        }
-      } else if (binanceStatus !== 451) {
-        console.warn(`Binance API 오류: HTTP ${binanceStatus}`);
-      }
-    } catch (error: any) {
-      console.warn(`Binance API 연결 실패: ${error.message}`);
+    // API 응답 검증
+    if (!data || !data[coinId] || !data[coinId].krw) {
+      throw new Error(`CoinGecko 가격 데이터를 찾을 수 없습니다: ${symbol}`);
     }
 
-    // 2) CoinCap fallback (Binance가 451이거나 데이터가 없을 때)
-    if (currentUsd === null) {
-      const coinCapJson = await fetchWithRetry<any>(`https://api.coincap.io/v2/assets/${coinCapId}`);
-      const priceUsd = coinCapJson?.data?.priceUsd;
-      const changePercent24Hr = coinCapJson?.data?.changePercent24Hr;
-
-      if (!priceUsd) {
-        throw new Error(`CoinCap 가격 데이터를 찾을 수 없습니다: ${symbol}`);
-      }
-
-      currentUsd = parseFloat(priceUsd);
-      change24h = parseFloat(changePercent24Hr) || 0;
-    }
-
-    // USD -> KRW 변환
-    const current = currentUsd * usdToKrw;
+    const current = data[coinId].krw;
+    const change24h = data[coinId].krw_24h_change || 0;
 
     const history = generateHistoricalData(current, period);
 
