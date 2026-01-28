@@ -11,8 +11,8 @@ import {
 const app = express();
 const PORT = 3001;
 
-// 캐시 설정 (5분)
-const cache = new NodeCache({ stdTTL: 300 });
+// 캐시 설정 (10분 - rate limit 방지)
+const cache = new NodeCache({ stdTTL: 600 });
 
 // 미들웨어
 app.use(cors());

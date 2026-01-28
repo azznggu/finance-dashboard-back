@@ -11,6 +11,28 @@ export interface HistoricalData {
   history: PriceData[];
 }
 
+// 재시도 헬퍼 함수 (429 에러 처리)
+async function fetchWithRetry(url: string, maxRetries: number = 3, delay: number = 1000): Promise<Response> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url);
+    
+    // 429 에러인 경우 재시도
+    if (response.status === 429) {
+      if (attempt < maxRetries - 1) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : delay * Math.pow(2, attempt);
+        console.warn(`Rate limit 초과. ${waitTime / 1000}초 후 재시도... (${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+    }
+    
+    return response;
+  }
+  
+  throw new Error('최대 재시도 횟수 초과');
+}
+
 // 환율 조회
 export async function getExchangeRate(pair: string, period: string = '1day'): Promise<HistoricalData> {
   try {
@@ -45,7 +67,7 @@ export async function getExchangeRate(pair: string, period: string = '1day'): Pr
 // 금시세 조회 (3.75g 기준)
 export async function getGoldPrice(period: string = '1day'): Promise<HistoricalData> {
   try {
-    const response = await fetch(
+    const response = await fetchWithRetry(
       'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=krw&include_24hr_change=true'
     );
 
@@ -96,7 +118,7 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
       throw new Error(`지원하지 않는 암호화폐: ${symbol}`);
     }
 
-    const response = await fetch(
+    const response = await fetchWithRetry(
       `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=krw&include_24hr_change=true`
     );
 
