@@ -1,7 +1,7 @@
 import type { Handler } from '@netlify/functions';
 import { getCached } from './_lib/cache.js';
 import { badRequest, ok, serverError } from './_lib/response.js';
-import { getCryptoPrice } from '../../src/services/financeService.js';
+import { getCryptoPrice } from '../../src/services/financeService.ts';
 
 const TTL_MS = 10 * 60 * 1000; // 10분
 
