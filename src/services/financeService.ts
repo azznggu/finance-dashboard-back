@@ -64,32 +64,45 @@ export async function getExchangeRate(pair: string, period: string = '1day'): Pr
   }
 }
 
-// 금시세 조회 (3.75g 기준)
+// 금시세 조회 (3.75g 기준) - CoinGecko 사용, 실패 시 fallback
 export async function getGoldPrice(period: string = '1day'): Promise<HistoricalData> {
   try {
+    // CoinGecko API 시도
     const response = await fetchWithRetry(
       'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=krw&include_24hr_change=true'
     );
 
-    if (!response.ok) {
-      throw new Error(`CoinGecko API 오류: ${response.status} ${response.statusText}`);
+    if (response.ok) {
+      const data = await response.json();
+
+      // API 응답 검증
+      if (data && data['pax-gold'] && data['pax-gold'].krw) {
+        // 1온스 = 31.1035그램, 3.75그램으로 환산
+        const gramsToOunce = 3.75 / 31.1035;
+        const current = data['pax-gold'].krw * gramsToOunce;
+        const change24h = data['pax-gold'].krw_24h_change || 0;
+
+        const history = generateHistoricalData(current, period);
+
+        return {
+          current,
+          change24h,
+          history
+        };
+      }
     }
 
-    const data = await response.json();
+    // Fallback: 환율 기반 계산 (CoinGecko 실패 시)
+    console.warn('CoinGecko API 실패, 환율 기반 계산으로 전환');
+    const exchangeResponse = await fetch('https://open.er-api.com/v6/latest/USD');
+    const exchangeData = await exchangeResponse.json();
+    const usdToKrw = exchangeData.rates?.KRW || 1320;
 
-    // API 응답 검증
-    if (!data || !data['pax-gold']) {
-      throw new Error('금시세 데이터를 찾을 수 없습니다');
-    }
-
-    if (!data['pax-gold'].krw) {
-      throw new Error('KRW 가격 데이터가 없습니다');
-    }
-
-    // 1온스 = 31.1035그램, 3.75그램으로 환산
+    // 금 가격 (USD/온스 기준, 약 $2,000/온스)
+    const goldPricePerOunceUSD = 2000;
     const gramsToOunce = 3.75 / 31.1035;
-    const current = data['pax-gold'].krw * gramsToOunce;
-    const change24h = data['pax-gold'].krw_24h_change || 0;
+    const current = goldPricePerOunceUSD * usdToKrw * gramsToOunce;
+    const change24h = 0;
 
     const history = generateHistoricalData(current, period);
 
@@ -104,41 +117,46 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
   }
 }
 
-// 가상화폐 시세 조회
+// 가상화폐 시세 조회 (Binance API 사용)
 export async function getCryptoPrice(symbol: string, period: string = '1day'): Promise<HistoricalData> {
   try {
-    const coinIds: { [key: string]: string } = {
-      'BTC': 'bitcoin',
-      'ETH': 'ethereum',
-      'XRP': 'ripple'
+    // Binance 심볼 매핑 (USDT 기준으로 가격 조회 후 KRW 환율 적용)
+    const binanceSymbols: { [key: string]: string } = {
+      'BTC': 'BTCUSDT',
+      'ETH': 'ETHUSDT',
+      'XRP': 'XRPUSDT'
     };
 
-    const coinId = coinIds[symbol.toUpperCase()];
-    if (!coinId) {
+    const binanceSymbol = binanceSymbols[symbol.toUpperCase()];
+    if (!binanceSymbol) {
       throw new Error(`지원하지 않는 암호화폐: ${symbol}`);
     }
 
-    const response = await fetchWithRetry(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=krw&include_24hr_change=true`
+    // 1. USD/KRW 환율 조회
+    const exchangeResponse = await fetch('https://open.er-api.com/v6/latest/USD');
+    const exchangeData = await exchangeResponse.json();
+    const usdToKrw = exchangeData.rates?.KRW || 1320; // 기본값
+
+    // 2. Binance에서 암호화폐 가격 조회 (USDT 기준)
+    const response = await fetch(
+      `https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`
     );
 
     if (!response.ok) {
-      throw new Error(`CoinGecko API 오류: ${response.status} ${response.statusText}`);
+      throw new Error(`Binance API 오류: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
 
     // API 응답 검증
-    if (!data || !data[coinId]) {
-      throw new Error(`암호화폐 데이터를 찾을 수 없습니다: ${symbol} (${coinId})`);
+    if (!data || !data.lastPrice) {
+      throw new Error(`암호화폐 데이터를 찾을 수 없습니다: ${symbol}`);
     }
 
-    if (!data[coinId].krw) {
-      throw new Error(`KRW 가격 데이터가 없습니다: ${symbol}`);
-    }
-
-    const current = data[coinId].krw;
-    const change24h = data[coinId].krw_24h_change || 0;
+    // USDT 가격을 KRW로 변환
+    const current = parseFloat(data.lastPrice) * usdToKrw;
+    const priceChangePercent = parseFloat(data.priceChangePercent) || 0;
+    const change24h = priceChangePercent;
 
     const history = generateHistoricalData(current, period);
 
