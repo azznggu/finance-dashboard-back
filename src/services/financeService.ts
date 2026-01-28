@@ -1,4 +1,5 @@
 // 금융 데이터 서비스
+import axios, { AxiosResponse } from 'axios';
 
 export interface PriceData {
   timestamp: number;
@@ -11,33 +12,36 @@ export interface HistoricalData {
   history: PriceData[];
 }
 
-// 재시도 헬퍼 함수 (429 에러 처리)
-async function fetchWithRetry(url: string, maxRetries: number = 3, delay: number = 1000): Promise<Response> {
+// 재시도 헬퍼 함수 (429 에러 처리) - axios 버전
+async function fetchWithRetry<T = any>(url: string, maxRetries: number = 3, delay: number = 1000): Promise<AxiosResponse<T>> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const response = await fetch(url);
-    
-    // 429 에러인 경우 재시도
-    if (response.status === 429) {
-      if (attempt < maxRetries - 1) {
-        const retryAfter = response.headers.get('Retry-After');
-        const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : delay * Math.pow(2, attempt);
-        console.warn(`Rate limit 초과. ${waitTime / 1000}초 후 재시도... (${attempt + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-        continue;
+    try {
+      const response = await axios.get<T>(url);
+      return response;
+    } catch (error: any) {
+      // 429 에러인 경우 재시도
+      if (error.response?.status === 429) {
+        if (attempt < maxRetries - 1) {
+          const retryAfter = error.response.headers['retry-after'];
+          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : delay * Math.pow(2, attempt);
+          console.warn(`Rate limit 초과. ${waitTime / 1000}초 후 재시도... (${attempt + 1}/${maxRetries})`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          continue;
+        }
       }
+      // 다른 에러는 바로 throw
+      throw error;
     }
-    
-    return response;
   }
-  
+
   throw new Error('최대 재시도 횟수 초과');
 }
 
 // 환율 조회
 export async function getExchangeRate(pair: string, period: string = '1day'): Promise<HistoricalData> {
   try {
-    const response = await fetch('https://open.er-api.com/v6/latest/USD');
-    const data = await response.json();
+    const response = await axios.get('https://open.er-api.com/v6/latest/USD');
+    const data = response.data;
 
     const now = Date.now();
     let current = 0;
@@ -72,8 +76,8 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
       'https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=krw&include_24hr_change=true'
     );
 
-    if (response.ok) {
-      const data = await response.json();
+    if (response.status === 200) {
+      const data = response.data;
 
       // API 응답 검증
       if (data && data['pax-gold'] && data['pax-gold'].krw) {
@@ -94,8 +98,8 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
 
     // Fallback: 환율 기반 계산 (CoinGecko 실패 시)
     console.warn('CoinGecko API 실패, 환율 기반 계산으로 전환');
-    const exchangeResponse = await fetch('https://open.er-api.com/v6/latest/USD');
-    const exchangeData = await exchangeResponse.json();
+    const exchangeResponse = await axios.get('https://open.er-api.com/v6/latest/USD');
+    const exchangeData = exchangeResponse.data;
     const usdToKrw = exchangeData.rates?.KRW || 1320;
 
     // 금 가격 (USD/온스 기준, 약 $2,000/온스)
@@ -144,33 +148,37 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
     }
 
     // USD/KRW 환율 조회 (KRW 환산용)
-    const exchangeResponse = await fetch('https://open.er-api.com/v6/latest/USD');
-    const exchangeData = await exchangeResponse.json();
+    const exchangeResponse = await axios.get('https://open.er-api.com/v6/latest/USD');
+    const exchangeData = exchangeResponse.data;
     const usdToKrw = exchangeData.rates?.KRW || 1320;
 
     // 1) Binance 우선 시도
     let currentUsd: number | null = null;
     let change24h: number = 0;
 
-    const binanceResp = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`);
-    if (binanceResp.ok) {
-      const binanceData = await binanceResp.json();
-      if (binanceData?.lastPrice) {
-        currentUsd = parseFloat(binanceData.lastPrice);
-        change24h = parseFloat(binanceData.priceChangePercent) || 0;
+    try {
+      const binanceResp = await axios.get(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`);
+      if (binanceResp.status === 200) {
+        const binanceData = binanceResp.data;
+        if (binanceData?.lastPrice) {
+          currentUsd = parseFloat(binanceData.lastPrice);
+          change24h = parseFloat(binanceData.priceChangePercent) || 0;
+        }
       }
-    } else if (binanceResp.status !== 451) {
-      // 451(지역/정책 차단)은 fallback으로 우회, 그 외는 에러로 남김(그래도 fallback 시도)
-      console.warn(`Binance API 오류: ${binanceResp.status} ${binanceResp.statusText}`);
+    } catch (error: any) {
+      if (error.response?.status !== 451) {
+        // 451(지역/정책 차단)은 fallback으로 우회, 그 외는 에러로 남김(그래도 fallback 시도)
+        console.warn(`Binance API 오류: ${error.response?.status} ${error.message}`);
+      }
     }
 
     // 2) CoinCap fallback (Binance가 451이거나 데이터가 없을 때)
     if (currentUsd === null) {
       const coinCapResp = await fetchWithRetry(`https://api.coincap.io/v2/assets/${coinCapId}`);
-      if (!coinCapResp.ok) {
+      if (coinCapResp.status !== 200) {
         throw new Error(`CoinCap API 오류: ${coinCapResp.status} ${coinCapResp.statusText}`);
       }
-      const coinCapJson = await coinCapResp.json();
+      const coinCapJson = coinCapResp.data;
       const priceUsd = coinCapJson?.data?.priceUsd;
       const changePercent24Hr = coinCapJson?.data?.changePercent24Hr;
 
@@ -201,10 +209,10 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
 // S&P 500 지수 조회
 export async function getSP500(period: string = '1day'): Promise<HistoricalData> {
   try {
-    const response = await fetch(
+    const response = await axios.get(
       'https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=1d'
     );
-    const data = await response.json();
+    const data = response.data;
 
     const quote = data.chart.result[0];
     const current = quote.meta.regularMarketPrice;
