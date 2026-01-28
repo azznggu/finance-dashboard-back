@@ -1,5 +1,5 @@
 // 금융 데이터 서비스
-import got from 'got';
+import { request } from 'undici';
 
 export interface PriceData {
   timestamp: number;
@@ -12,36 +12,39 @@ export interface HistoricalData {
   history: PriceData[];
 }
 
-// 재시도 헬퍼 함수 (429 에러 처리) - got 버전
+// 재시도 헬퍼 함수 (429 에러 처리) - undici 버전
 async function fetchWithRetry<T = any>(url: string, maxRetries: number = 3, delay: number = 1000): Promise<T> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const response = await got.get(url, {
+      const { statusCode, headers, body } = await request(url, {
+        method: 'GET',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)'
+          'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)',
+          'Accept': 'application/json'
         },
-        timeout: {
-          request: 10000
-        },
-        retry: {
-          limit: 0
-        }
-      }).json<T>();
-
-      return response;
-    } catch (error: any) {
-      console.error(`Fetch 시도 ${attempt + 1} 실패:`, error.message);
+        headersTimeout: 10000,
+        bodyTimeout: 10000
+      });
 
       // 429 에러인 경우 재시도
-      if (error.response?.statusCode === 429) {
+      if (statusCode === 429) {
         if (attempt < maxRetries - 1) {
-          const retryAfter = error.response.headers['retry-after'];
+          const retryAfter = headers['retry-after'] as string;
           const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : delay * Math.pow(2, attempt);
           console.warn(`Rate limit 초과. ${waitTime / 1000}초 후 재시도... (${attempt + 1}/${maxRetries})`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           continue;
         }
       }
+
+      if (statusCode !== 200) {
+        throw new Error(`HTTP ${statusCode}`);
+      }
+
+      const text = await body.text();
+      return JSON.parse(text) as T;
+    } catch (error: any) {
+      console.error(`Fetch 시도 ${attempt + 1} 실패:`, error.message);
 
       if (attempt === maxRetries - 1) {
         throw error;
@@ -57,9 +60,18 @@ async function fetchWithRetry<T = any>(url: string, maxRetries: number = 3, dela
 // 환율 조회
 export async function getExchangeRate(pair: string, period: string = '1day'): Promise<HistoricalData> {
   try {
-    const data = await got.get('https://open.er-api.com/v6/latest/USD', {
-      timeout: { request: 10000 }
-    }).json<any>();
+    const { statusCode, body } = await request('https://open.er-api.com/v6/latest/USD', {
+      method: 'GET',
+      headersTimeout: 10000,
+      bodyTimeout: 10000
+    });
+
+    if (statusCode !== 200) {
+      throw new Error(`HTTP ${statusCode}`);
+    }
+
+    const text = await body.text();
+    const data = JSON.parse(text);
 
     const now = Date.now();
     let current = 0;
@@ -112,9 +124,13 @@ export async function getGoldPrice(period: string = '1day'): Promise<HistoricalD
 
     // Fallback: 환율 기반 계산 (CoinGecko 실패 시)
     console.warn('CoinGecko API 실패, 환율 기반 계산으로 전환');
-    const exchangeData = await got.get('https://open.er-api.com/v6/latest/USD', {
-      timeout: { request: 10000 }
-    }).json<any>();
+    const { statusCode: exStatusCode, body: exBody } = await request('https://open.er-api.com/v6/latest/USD', {
+      method: 'GET',
+      headersTimeout: 10000,
+      bodyTimeout: 10000
+    });
+    const exText = await exBody.text();
+    const exchangeData = JSON.parse(exText);
     const usdToKrw = exchangeData.rates?.KRW || 1320;
 
     // 금 가격 (USD/온스 기준, 약 $2,000/온스)
@@ -163,9 +179,13 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
     }
 
     // USD/KRW 환율 조회 (KRW 환산용)
-    const exchangeData = await got.get('https://open.er-api.com/v6/latest/USD', {
-      timeout: { request: 10000 }
-    }).json<any>();
+    const { statusCode: exStatusCode, body: exBody } = await request('https://open.er-api.com/v6/latest/USD', {
+      method: 'GET',
+      headersTimeout: 10000,
+      bodyTimeout: 10000
+    });
+    const exText = await exBody.text();
+    const exchangeData = JSON.parse(exText);
     const usdToKrw = exchangeData.rates?.KRW || 1320;
 
     // 1) Binance 우선 시도
@@ -173,22 +193,31 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
     let change24h: number = 0;
 
     try {
-      const binanceData = await got.get(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)'
-        },
-        timeout: { request: 10000 }
-      }).json<any>();
+      const { statusCode: binanceStatus, body: binanceBody } = await request(
+        `https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`,
+        {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)'
+          },
+          headersTimeout: 10000,
+          bodyTimeout: 10000
+        }
+      );
 
-      if (binanceData?.lastPrice) {
-        currentUsd = parseFloat(binanceData.lastPrice);
-        change24h = parseFloat(binanceData.priceChangePercent) || 0;
+      if (binanceStatus === 200) {
+        const binanceText = await binanceBody.text();
+        const binanceData = JSON.parse(binanceText);
+
+        if (binanceData?.lastPrice) {
+          currentUsd = parseFloat(binanceData.lastPrice);
+          change24h = parseFloat(binanceData.priceChangePercent) || 0;
+        }
+      } else if (binanceStatus !== 451) {
+        console.warn(`Binance API 오류: HTTP ${binanceStatus}`);
       }
     } catch (error: any) {
-      if (error.response?.statusCode !== 451) {
-        // 451(지역/정책 차단)은 fallback으로 우회, 그 외는 에러로 남김(그래도 fallback 시도)
-        console.warn(`Binance API 연결 실패: ${error.message}`);
-      }
+      console.warn(`Binance API 연결 실패: ${error.message}`);
     }
 
     // 2) CoinCap fallback (Binance가 451이거나 데이터가 없을 때)
@@ -224,15 +253,24 @@ export async function getCryptoPrice(symbol: string, period: string = '1day'): P
 // S&P 500 지수 조회
 export async function getSP500(period: string = '1day'): Promise<HistoricalData> {
   try {
-    const data = await got.get(
+    const { statusCode, body } = await request(
       'https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&range=1d',
       {
+        method: 'GET',
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; FinanceDashboard/1.0)'
         },
-        timeout: { request: 10000 }
+        headersTimeout: 10000,
+        bodyTimeout: 10000
       }
-    ).json<any>();
+    );
+
+    if (statusCode !== 200) {
+      throw new Error(`HTTP ${statusCode}`);
+    }
+
+    const text = await body.text();
+    const data = JSON.parse(text);
 
     const quote = data.chart.result[0];
     const current = quote.meta.regularMarketPrice;
